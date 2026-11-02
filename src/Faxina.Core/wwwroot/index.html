@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Faxina</title>
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M19.5 3.5l-6 13" /><path d="M8.5 17.5h14l2.5 11h-19z" /><path d="M11 22.5v6M15.5 22.5v6M20 22.5v6" /></svg>
+        </div>
+        <div>
+          <div class="brand-name">Faxina</div>
+          <div class="brand-sub">limpeza de disco</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <button data-view="overview" class="active"><span class="ico" data-icon="home"></span>Visão geral</button>
+        <button data-view="explore"><span class="ico" data-icon="tree"></span>Explorar disco</button>
+        <button data-view="files"><span class="ico" data-icon="file"></span>Maiores arquivos</button>
+        <button data-view="cleanup"><span class="ico" data-icon="sparkle"></span>Limpeza<span class="nav-badge" id="navCleanup"></span></button>
+        <button data-view="apps"><span class="ico" data-icon="grid"></span>Programas</button>
+        <button data-view="account"><span class="ico" data-icon="key"></span>Conta</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="mini-drive" id="miniDrive"></div>
+        <div class="admin-box" id="adminBox"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="viewTitle">Visão geral</h1>
+          <p id="viewSub" class="muted"></p>
+        </div>
+        <div class="topbar-actions" id="topActions"></div>
+      </header>
+
+      <section class="view active" id="view-overview"></section>
+      <section class="view" id="view-explore"></section>
+      <section class="view" id="view-files"></section>
+      <section class="view" id="view-cleanup"></section>
+      <section class="view" id="view-apps"></section>
+      <section class="view" id="view-account"></section>
+    </main>
+  </div>
+
+  <div class="drawer" id="drawer">
+    <button class="drawer-head" id="drawerToggle">
+      <span class="ico" data-icon="terminal"></span>
+      <span>Atividade</span>
+      <span class="drawer-status" id="drawerStatus"></span>
+      <span class="ico chev" data-icon="chevron-up"></span>
+    </button>
+    <div class="drawer-body"><pre id="logLines"></pre></div>
+  </div>
+
+  <div class="modal-backdrop" id="modal" hidden></div>
+  <div class="toasts" id="toasts"></div>
+  <div class="tooltip" id="tooltip" hidden></div>
+
+  <script src="mock.js"></script>
+  <script src="charts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

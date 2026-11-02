@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Código comum a Windows e Linux: varredura, limpezas compartilhadas, ponte JS ↔ C# e a interface web. -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Faxina.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- A interface vai dentro do assembly: cada versão publicada é um arquivo só. -->
+    <EmbeddedResource Include="wwwroot\**\*" LogicalName="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
