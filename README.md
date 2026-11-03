@@ -2,12 +2,24 @@
 
 App para descobrir o que ocupa o disco e limpar com segurança, no **Windows** e no **Linux**.
 
+**[Baixar a última versão](https://github.com/EduardoPrudencio/faxina/releases/latest)** (Windows instalada, Windows portátil e Linux x64)
+
+![Visão geral do disco, com o espaço usado e livre e o atalho para as limpezas](docs/visao-geral.png)
+
 - **Visão geral** — uso do disco, composição por pasta e o espaço que costuma passar despercebido (no Windows: pagefile, hibernação, pontos de restauração, Lixeira, OneDrive só na nuvem; no Linux: swap, journald, Snaps, Flatpak, Lixeira, reserva do ext4).
 - **Explorar disco** — treemap navegável de qualquer disco ou pasta, tipos de arquivo e pastas de desenvolvimento (node_modules, bin/obj…).
 - **Maiores arquivos** — os 300 maiores, filtráveis por tipo, com abrir/Lixeira/excluir.
 - **Limpeza** — limpezas medidas antes de rodar. Windows: Temp, Windows Update, DISM, hibernação, pontos de restauração, discos de VM sem uso, snapshots da Dell, logs do McAfee… Linux: cache do apt/dnf/pacman, pacotes órfãos e kernels antigos, journald, logs rotacionados, Snaps antigos, runtimes Flatpak, ~/.cache… Nos dois: npm, Yarn, pnpm, NuGet, Gradle, pip, Cypress, node_modules parados, Docker, VS Code/Cursor.
 - **Programas** — o que está instalado (Windows: Win32 + Store; Linux: apt/rpm, Snap, Flatpak), por tamanho, com recomendações e botão de desinstalar.
 - **Conta** — troca a senha do usuário atual, sempre conferindo a senha atual. Windows: contas locais e de domínio (mesma API do Ctrl+Alt+Del); conta Microsoft é detectada e leva ao site da Microsoft, onde essa senha é trocada. Linux: exige `sudo`; confere a senha atual no `/etc/shadow` com o `crypt()` do sistema e grava com `chpasswd`. As senhas nunca vão na linha de comando nem em logs, e três senhas atuais erradas bloqueiam novas tentativas por um tempo crescente.
+
+## Capturas de tela
+
+| Explorar disco | Maiores arquivos |
+|---|---|
+| ![Treemap das pastas do disco e gráfico por tipo de arquivo](docs/explorar-disco.png) | ![Lista dos maiores arquivos com filtros por tipo](docs/maiores-arquivos.png) |
+| **Limpeza** | **Programas** |
+| ![Limpezas com o espaço que cada uma libera](docs/limpeza.png) | ![Programas instalados por tamanho, com recomendações](docs/programas.png) |
 
 ## Como roda em cada sistema
 
