@@ -5,3 +5,4 @@ publish-portatil/
 publish-linux/
 *.user
 .vs/
+publish-release/
