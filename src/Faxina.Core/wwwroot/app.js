@@ -148,6 +148,7 @@ const state = {
     nm: { roots: store.get('nmRoots', null), idleDays: store.get('nmIdle', 90) },
   },
   apps: null, appsLoading: false, appsFilter: 'all', appsQuery: '', uninstalling: null,
+  appsSort: store.get('appsSort', { by: 'size', desc: true }),
   account: null, changingPassword: false,
 };
 
@@ -160,7 +161,7 @@ const TITLES = {
   explore: ['Explorar disco', 'Veja o tamanho de cada pasta e entre nelas para achar o que pesa'],
   files: ['Maiores arquivos', 'Os 300 maiores arquivos encontrados na última análise'],
   cleanup: ['Limpeza', 'Coisas que podem ser apagadas com segurança, com quanto cada uma libera'],
-  apps: ['Programas', 'Programas instalados, do maior para o menor, com recomendações'],
+  apps: ['Programas', 'Programas instalados, com tamanho e recomendações'],
   account: ['Conta', 'Senha do usuário deste computador'],
 };
 
@@ -751,6 +752,20 @@ const VERDICTS = {
   manter: ['ok', 'Manter'],
 };
 
+const byName = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
+const APP_SORTS = {
+  name: (a, b) => byName.compare((a.name || '').trim(), (b.name || '').trim()),
+  size: (a, b) => a.size - b.size || byName.compare(b.name || '', a.name || ''),
+};
+
+// Cabeçalho que ordena a lista: clicar de novo inverte a ordem
+function sortHeader(by, label, cls = '') {
+  const { by: cur, desc } = state.appsSort;
+  const arrow = cur === by ? `<span class="sort-arrow">${desc ? '↓' : '↑'}</span>` : '';
+  return `<th class="${cls}"><button class="sort-btn ${cur === by ? 'active' : ''}" data-apps-sort="${by}"
+    title="Ordenar por ${label.toLowerCase()}">${label}${arrow}</button></th>`;
+}
+
 function renderApps() {
   const el = view('apps');
   if (state.appsLoading && !state.apps) {
@@ -769,7 +784,9 @@ function renderApps() {
   filters.big = ['Acima de 500 MB', a => a.size > 500 * 2 ** 20];
   if (!filters[state.appsFilter]) state.appsFilter = 'all';
 
-  const shown = apps.filter(filters[state.appsFilter][1]).filter(a => !q || (a.name + ' ' + (a.publisher || '')).toLowerCase().includes(q));
+  const { by, desc } = state.appsSort;
+  const shown = apps.filter(filters[state.appsFilter][1]).filter(a => !q || (a.name + ' ' + (a.publisher || '')).toLowerCase().includes(q))
+    .sort((a, b) => (desc ? -1 : 1) * APP_SORTS[by](a, b));
   const removable = apps.filter(a => a.verdict === 'remover');
   const max = Math.max(1, ...shown.map(a => a.size));
   const total = apps.reduce((s, a) => s + a.size, 0);
@@ -790,7 +807,7 @@ function renderApps() {
     </div>
     <div class="card" style="padding:16px 10px 6px">
       <table class="list">
-        <thead><tr><th>Programa</th><th>Recomendação</th><th class="bar-cell">Tamanho</th><th class="r"></th><th class="r">Instalado</th><th></th></tr></thead>
+        <thead><tr>${sortHeader('name', 'Programa')}<th>Recomendação</th>${sortHeader('size', 'Tamanho', 'bar-cell')}<th class="r"></th><th class="r">Instalado</th><th></th></tr></thead>
         <tbody>${shown.map(a => {
           const v = VERDICTS[a.verdict];
           const busy = state.uninstalling === a.id;
@@ -1109,6 +1126,15 @@ document.addEventListener('click', async e => {
 
   const af = e.target.closest('[data-apps-filter]');
   if (af) { state.appsFilter = af.dataset.appsFilter; return renderApps(); }
+
+  const as = e.target.closest('[data-apps-sort]');
+  if (as) {
+    const by = as.dataset.appsSort;
+    // Nome começa de A a Z; tamanho, do maior para o menor
+    state.appsSort = state.appsSort.by === by ? { by, desc: !state.appsSort.desc } : { by, desc: by === 'size' };
+    store.set('appsSort', state.appsSort);
+    return renderApps();
+  }
 
   const run = e.target.closest('[data-run]');
   if (run) return runCleanup(run.dataset.run);
