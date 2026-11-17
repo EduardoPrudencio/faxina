@@ -57,6 +57,10 @@ public sealed class Bridge
         {
             case "system.info":
                 return await Task.Run(_platform.GetSystemInfo);
+            case "system.hardware":
+                return await Task.Run(_platform.GetHardware);
+            case "system.memory":
+                return _platform.GetMemory();
 
             case "app.relaunchAdmin":
                 if (!_platform.RelaunchAsAdmin()) return false;
@@ -123,9 +127,96 @@ public sealed class Bridge
             case "account.changePassword":
                 return await ChangePasswordAsync(Str(p, "current") ?? "", Str(p, "next") ?? "");
 
+            // ───── recuperar ─────
+            case "recover.trash.list":
+                return await Task.Run(_platform.Recovery.ListTrash);
+            case "recover.trash.restore":
+                return await Task.Run(() => LogRestored(_platform.Recovery.RestoreFromTrash(StrList(p, "ids")), "Lixeira"));
+            case "recover.versions.info":
+                return _platform.Recovery.PreviousVersions();
+            case "recover.versions.list":
+                return await Task.Run(() => _platform.Recovery.ListSnapshots(Str(p, "path") ?? throw new InvalidOperationException("Escolha uma pasta.")));
+            case "recover.versions.browse":
+                return await Task.Run(() => _platform.Recovery.BrowseSnapshot(Str(p, "id")!, Str(p, "path")!));
+            case "recover.versions.restore":
+                return await Task.Run(() => LogRestored(
+                    _platform.Recovery.RestoreFromSnapshot(Str(p, "id")!, Str(p, "path")!, StrList(p, "names")), "versão anterior"));
+            case "recover.versions.fileHistory":
+                _platform.Recovery.OpenFileHistory();
+                return true;
+            case "recover.deep.tool":
+                return _platform.Recovery.DeepTool();
+            case "recover.deep.install":
+                _platform.Recovery.OpenDeepToolInstall();
+                return true;
+            case "recover.deep.start":
+                return StartDeep(new DeepRequest(Str(p, "source") ?? "", Str(p, "destination") ?? "",
+                    Str(p, "mode") == "full" ? "full" : "quick", FileGroups.Validate(StrList(p, "groups")), Str(p, "nameFilter")));
+            case "recover.deep.cancel":
+                _deepCts?.Cancel();
+                return true;
+
             default:
                 throw new InvalidOperationException("Método desconhecido: " + method);
         }
+    }
+
+    // ───────────────────────── recuperar ─────────────────────────
+
+    private CancellationTokenSource? _deepCts;
+
+    private List<RestoredItem> LogRestored(List<RestoredItem> items, string from)
+    {
+        foreach (var i in items)
+            Emit("log", new
+            {
+                source = "recover",
+                line = i.Error != null ? $"Erro ao restaurar {i.Name}: {i.Error}"
+                    : $"↺ {i.Name} voltou da {from} para {i.Path}{(i.Renamed ? " (com outro nome, já existia um igual)" : "")}",
+            });
+        return items;
+    }
+
+    private object StartDeep(DeepRequest req)
+    {
+        if (_deepCts != null) throw new InvalidOperationException("Já há uma recuperação em andamento.");
+        if (req.NameFilter is { Length: > 200 }) throw new InvalidOperationException("Filtro de nome muito longo.");
+        var cts = _deepCts = new CancellationTokenSource();
+        var started = DateTime.UtcNow;
+        void Log(string line) => Emit("log", new { source = "recover", line });
+
+        var output = Path.Combine(req.Destination, $"Faxina recuperados {DateTime.Now:yyyy-MM-dd HH-mm}");
+        _ = Task.Run(async () =>
+        {
+            var lastPercent = (int?)null;
+            // Enquanto a ferramenta roda, conta o que já apareceu na pasta de destino
+            using var timer = new Timer(_ =>
+            {
+                var (files, bytes) = RecoveryKit.Count(output);
+                Emit("recover.progress", new { files, bytes, percent = lastPercent, elapsed = (DateTime.UtcNow - started).TotalSeconds, folder = output });
+            }, null, 1000, 2000);
+            try
+            {
+                Log($"▶ Recuperação profunda de {req.Source} para {output}");
+                await _platform.Recovery.RunDeepAsync(req, output, Log, pc => lastPercent = pc, cts.Token);
+                timer.Dispose();
+                var (files, bytes) = RecoveryKit.Count(output);
+                Log($"✔ Concluído: {files} arquivo(s), {Br.Size(bytes)}, em {output}");
+                Emit("recover.done", new { files, bytes, folder = output });
+            }
+            catch (OperationCanceledException)
+            {
+                Log("Recuperação cancelada. O que já tinha sido encontrado ficou na pasta de destino.");
+                Emit("recover.cancelled", new { });
+            }
+            catch (Exception ex)
+            {
+                Log("Erro: " + ex.Message);
+                Emit("recover.error", new { message = ex.Message });
+            }
+            finally { _deepCts = null; }
+        });
+        return true;
     }
 
     // ───────────────────────── varredura ─────────────────────────
@@ -364,4 +455,9 @@ public sealed class Bridge
 
     private static bool Bool(JsonElement p, string name) =>
         p.ValueKind == JsonValueKind.Object && p.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    private static List<string> StrList(JsonElement p, string name) =>
+        p.ValueKind == JsonValueKind.Object && p.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array
+            ? v.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList()
+            : [];
 }

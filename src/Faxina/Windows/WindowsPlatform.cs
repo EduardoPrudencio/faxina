@@ -16,6 +16,9 @@ public sealed class WindowsPlatform : IPlatform
     public IReadOnlyList<CleanupTarget> Cleanups => WindowsCleanups.All;
 
     public object GetSystemInfo() => WindowsSystem.Get();
+    public HardwareInfo GetHardware() => WindowsHardware.Get();
+    public MemoryNow GetMemory() => WindowsHardware.Memory();
+    public IRecovery Recovery { get; } = new WindowsRecovery();
     public List<string> DefaultProjectRoots() => WindowsCleanups.DefaultProjectRoots();
     public Task<List<InstalledApp>> ListAppsAsync(CancellationToken ct) => WindowsApps.ListAsync(ct);
     public Task<int> UninstallAsync(string id, Action<string> log, CancellationToken ct) => WindowsApps.UninstallAsync(id, log, ct);
@@ -68,18 +71,28 @@ public static class Elevation
 /// <summary>Dados que a varredura de pastas não enxerga: paginação, hibernação, pontos de restauração e Lixeira.</summary>
 public static class WindowsSystem
 {
+    /// <summary>Discos locais e removíveis (pendrives, cartões) que estão prontos para uso.</summary>
+    public static List<Volume> Volumes()
+    {
+        var list = new List<Volume>();
+        foreach (var d in DriveInfo.GetDrives())
+        {
+            try
+            {
+                if (!d.IsReady || d.DriveType is not (DriveType.Fixed or DriveType.Removable)) continue;
+                var removable = d.DriveType == DriveType.Removable;
+                list.Add(new Volume(d.Name, string.IsNullOrWhiteSpace(d.VolumeLabel) ? (removable ? "Removível" : "Disco local") : d.VolumeLabel,
+                    d.DriveFormat, d.TotalSize, d.AvailableFreeSpace, Removable: removable));
+            }
+            catch (IOException) { }      // pendrive tirado no meio da leitura
+            catch (UnauthorizedAccessException) { }
+        }
+        return list;
+    }
+
     public static object Get()
     {
-        var drives = DriveInfo.GetDrives()
-            .Where(d => d.IsReady && d.DriveType == DriveType.Fixed)
-            .Select(d => new
-            {
-                name = d.Name,
-                label = string.IsNullOrWhiteSpace(d.VolumeLabel) ? "Disco local" : d.VolumeLabel,
-                format = d.DriveFormat,
-                total = d.TotalSize,
-                free = d.AvailableFreeSpace,
-            }).ToList();
+        var drives = Volumes();
 
         var sysDrive = Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
         var hidden = new List<HiddenItem>();

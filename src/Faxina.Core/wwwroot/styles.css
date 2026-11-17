@@ -277,6 +277,73 @@ h1, h2, h3, h4 { margin: 0; font-family: "Segoe UI Variable Display", "Segoe UI"
 .hidden-item .txt small { color: var(--muted); font-size: 12.5px; }
 .hidden-item .size { font-weight: 600; font-variant-numeric: tabular-nums; }
 
+/* ───────── recuperar ───────── */
+table.list th.check, table.list td.check { width: 28px; padding-right: 0; }
+table.list input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; vertical-align: middle; }
+table.list td.path-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.hint { font-size: 12.5px; margin-top: 10px; }
+.path-chip {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 5px 10px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); font-size: 12.5px;
+}
+.link { color: var(--accent); text-decoration: none; font-weight: 500; }
+.link:hover { text-decoration: underline; }
+.err-text { color: var(--danger); font-size: 13px; margin-top: 10px; }
+
+.card-head h3 .step {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 8px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; vertical-align: 1px;
+}
+.opt-list { display: grid; gap: 8px; }
+.opt {
+  display: flex; align-items: center; gap: 12px; padding: 11px 12px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; transition: border-color .15s, background .15s;
+}
+.opt:hover { border-color: var(--border-strong); }
+.opt.active { border-color: var(--accent); background: var(--accent-soft); }
+.opt.disabled { opacity: .55; cursor: default; }
+.opt input { accent-color: var(--accent); margin: 0; flex-shrink: 0; }
+.opt > .ico { color: var(--muted); flex-shrink: 0; }
+.opt .txt { min-width: 0; flex: 1; }
+.opt .txt b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opt .txt small { display: block; color: var(--muted); font-size: 12.5px; }
+.field { display: grid; gap: 6px; margin-top: 14px; font-size: 13px; font-weight: 500; }
+.field .input { width: 100%; }
+.deep-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 16px 0 4px; }
+.deep-nums .value { font-size: 20px; }
+@media (max-width: 900px) { .deep-form { grid-template-columns: 1fr; } }
+
+/* ───────── computador ───────── */
+.hw-big { font-size: 22px; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }
+.hw-cpu { font-size: 18px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin-top: 16px; font-size: 13.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hw-usage { justify-content: space-between; font-size: 13.5px; margin: 0; }
+.live { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 14px; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+
+.disk-list { display: grid; gap: 12px; }
+.disk { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.disk + .disk { margin-top: 0; }
+.card > .disk { margin-top: 12px; }
+.disk-head { display: flex; align-items: center; gap: 14px; }
+.disk-head .stat-icon { flex-shrink: 0; }
+.disk-head .txt { flex: 1; min-width: 0; }
+.disk-head .txt b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.disk-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.disk-size { font-size: 18px; font-weight: 700; white-space: nowrap; }
+.vol-list { display: grid; gap: 14px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.vol-top { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; font-size: 13.5px; }
+.vol-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vol-empty { margin-top: 12px; font-size: 13px; }
+@media (max-width: 640px) {
+  .vol-top { flex-wrap: wrap; }
+  .vol-name { flex-basis: 100%; }
+}
+
 /* ───────── explorar ───────── */
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
 .scan-progress { display: grid; gap: 12px; }

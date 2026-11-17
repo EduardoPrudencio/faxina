@@ -10,6 +10,11 @@ App para descobrir o que ocupa o disco e limpar com segurança, no **Windows** e
 - **Explorar disco** — treemap navegável de qualquer disco ou pasta, tipos de arquivo e pastas de desenvolvimento (node_modules, bin/obj…).
 - **Maiores arquivos** — os 300 maiores, filtráveis por tipo, com abrir/Lixeira/excluir.
 - **Limpeza** — limpezas medidas antes de rodar. Windows: Temp, Windows Update, DISM, hibernação, pontos de restauração, discos de VM sem uso, snapshots da Dell, logs do McAfee… Linux: cache do apt/dnf/pacman, pacotes órfãos e kernels antigos, journald, logs rotacionados, Snaps antigos, runtimes Flatpak, ~/.cache… Nos dois: npm, Yarn, pnpm, NuGet, Gradle, pip, Cypress, node_modules parados, Docker, VS Code/Cursor.
+- **Recuperar** — traz de volta o que foi apagado, em três frentes:
+  - *Lixeira:* lista o que está nela (inclusive a Lixeira de pendrives no Linux) e devolve cada item para a pasta de origem, sem sobrescrever nada.
+  - *Versões anteriores (Windows, admin):* abre uma pasta como ela era em cada ponto de restauração e mostra o que foi apagado ou mudou desde então; também leva ao Histórico de Arquivos, se estiver ativado.
+  - *Recuperação profunda:* procura restos de arquivos no disco com o [Windows File Recovery](https://apps.microsoft.com/detail/9N26S50LN705) (Microsoft) ou o [PhotoRec](https://www.cgsecurity.org/wiki/PhotoRec) (Linux), filtrando por tipo (fotos, vídeos, documentos…) e salvando sempre em outro disco. Avisa quando a origem é um SSD, onde as chances são pequenas.
+- **Computador** — modelo, processador, memória (uso ao vivo, pentes e encaixes) e todos os discos conectados, com tipo (SSD/HDD, NVMe/USB), saúde e o espaço de cada volume.
 - **Programas** — o que está instalado (Windows: Win32 + Store; Linux: apt/rpm, Snap, Flatpak), por tamanho, com recomendações e botão de desinstalar.
 - **Conta** — troca a senha do usuário atual, sempre conferindo a senha atual. Windows: contas locais e de domínio (mesma API do Ctrl+Alt+Del); conta Microsoft é detectada e leva ao site da Microsoft, onde essa senha é trocada. Linux: exige `sudo`; confere a senha atual no `/etc/shadow` com o `crypt()` do sistema e grava com `chpasswd`. As senhas nunca vão na linha de comando nem em logs, e três senhas atuais erradas bloqueiam novas tentativas por um tempo crescente.
 

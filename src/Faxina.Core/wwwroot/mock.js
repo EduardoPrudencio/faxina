@@ -3,7 +3,7 @@
 
 window.MockHost = {
   create(deliver) {
-    const GB = 2 ** 30, MB = 2 ** 20;
+    const GB = 2 ** 30, MB = 2 ** 20, KB = 1024;
     const reply = (id, result, delay = 120) => setTimeout(() => deliver({ id, ok: true, result }), delay);
     const emit = (event, data) => deliver({ event, data });
     let scanTimer = null;
@@ -102,6 +102,18 @@ window.MockHost = {
       ['Realtek Audio Driver', 'Realtek Semiconductor Corp.', 60 * MB, 'manter', 'Driver. Recomendo manter.'],
     ].map(([name, publisher, size, verdict, advice], i) => ({ id: 'a' + i, name, publisher, size, verdict, advice, version: '1.0', installDate: '2025-03-10', source: 'win32' }));
 
+    let deepTimer;
+    let trash = [
+      ['Orçamento 2026.xlsx', 'C:\\Users\\usuario\\Documents\\Orçamento 2026.xlsx', '2026-11-16T10:12:00', 84 * KB, false],
+      ['IMG_2041.jpg', 'C:\\Users\\usuario\\Pictures\\Viagem\\IMG_2041.jpg', '2026-11-15T21:40:00', 3.4 * MB, false],
+      ['IMG_2042.jpg', 'C:\\Users\\usuario\\Pictures\\Viagem\\IMG_2042.jpg', '2026-11-15T21:40:00', 3.1 * MB, false],
+      ['Projeto antigo', 'C:\\Projetos\\Projeto antigo', '2026-11-02T14:03:00', 240 * MB, true],
+      ['setup.exe', 'C:\\Users\\usuario\\Downloads\\setup.exe', '2026-10-21T09:30:00', 58 * MB, false],
+    ].map(([name, originalPath, deletedAt, size, isFolder], i) => ({ id: 'C:\\$Recycle.Bin\\S-1\\$I' + i, name, originalPath, deletedAt, size, isFolder }));
+
+    // Oscila um pouco para a tela de Computador parecer viva
+    const memoryNow = () => ({ total: 15.7 * GB, available: (6 + Math.random()) * GB, swapTotal: 0, swapFree: 0 });
+
     function handle({ id, method, params }) {
       switch (method) {
         case 'system.info': return reply(id, {
@@ -149,6 +161,59 @@ window.MockHost = {
         case 'apps.uninstall': emit('log', { line: 'Abrindo o desinstalador…' }); return reply(id, { code: 0 }, 1200);
         case 'fs.delete': return reply(id, { ok: true, freed: 1.5 * GB });
         case 'dialog.pickFolder': return reply(id, 'C:\\Projetos');
+        case 'system.hardware': {
+          const c = { name: 'C:\\', label: 'Windows', format: 'NTFS', total: 476.9 * GB, free: 31.2 * GB, reserved: 0, removable: false };
+          return reply(id, {
+            computer: { machine: 'NOTEBOOK', maker: 'Fabricante', model: 'Notebook 14', os: 'Windows 11 Pro 25H2 (build 26200)', uptimeSeconds: 2 * 86400 + 5 * 3600 },
+            cpu: { name: 'Intel Core i7-1255U', cores: 10, threads: 12, baseMhz: 1700, maxMhz: null },
+            memory: {
+              now: memoryNow(),
+              modules: [{ size: 8 * GB, speed: 3200, type: 'DDR4', slot: 'DIMM 1' }, { size: 8 * GB, speed: 3200, type: 'DDR4', slot: 'DIMM 2' }],
+              slots: 2,
+            },
+            disks: [
+              { model: 'NVMe SSD 512GB', size: 476.9 * GB, media: 'ssd', bus: 'nvme', removable: false, health: 'ok', system: true, volumes: [c] },
+              { model: 'Seagate Expansion HDD', size: 931.5 * GB, media: 'hdd', bus: 'usb', removable: true, health: 'ok', system: false,
+                volumes: [{ name: 'E:\\', label: 'Backup', format: 'exFAT', total: 931.5 * GB, free: 402 * GB, reserved: 0, removable: false }] },
+              { model: 'SanDisk Ultra USB 3.0', size: 28.6 * GB, media: null, bus: 'usb', removable: true, health: null, system: false,
+                volumes: [{ name: 'F:\\', label: 'PENDRIVE', format: 'FAT32', total: 28.6 * GB, free: 21.9 * GB, reserved: 0, removable: true }] },
+            ],
+            others: [],
+          });
+        }
+        case 'system.memory': return reply(id, memoryNow());
+        case 'recover.trash.list': return reply(id, trash);
+        case 'recover.trash.restore': {
+          const back = trash.filter(i => params.ids.includes(i.id));
+          trash = trash.filter(i => !params.ids.includes(i.id));
+          back.forEach(i => emit('log', { source: 'recover', line: `↺ ${i.name} voltou da Lixeira para ${i.originalPath}` }));
+          return reply(id, back.map(i => ({ name: i.name, path: i.originalPath, renamed: false })));
+        }
+        case 'recover.versions.info': return reply(id, { supported: true, requiresAdmin: true, fileHistory: false });
+        case 'recover.versions.list': return reply(id, [
+          { id: '{a1}', created: '2026-11-12T09:14:00' }, { id: '{a2}', created: '2026-11-05T22:40:00' }, { id: '{a3}', created: '2026-10-28T08:02:00' }]);
+        case 'recover.versions.browse': return reply(id, [
+          { name: 'Contratos', isFolder: true, size: 0, modified: '2026-10-20T10:00:00', status: 'folder' },
+          { name: 'Fotos antigas', isFolder: true, size: 0, modified: '2026-09-02T10:00:00', status: 'deleted' },
+          { name: 'Orçamento 2026.xlsx', isFolder: false, size: 84 * KB, modified: '2026-11-03T16:21:00', status: 'deleted' },
+          { name: 'Relatório final.docx', isFolder: false, size: 1.2 * MB, modified: '2026-11-01T11:05:00', status: 'changed' },
+          { name: 'notas.txt', isFolder: false, size: 3 * KB, modified: '2026-08-14T08:00:00', status: 'same' },
+        ]);
+        case 'recover.versions.restore': return reply(id, params.names.map(n => ({ name: n, path: params.path + '\\' + n, renamed: false })));
+        case 'recover.deep.tool': return reply(id, { name: 'Windows File Recovery', installed: true, requiresAdmin: true, canOpenInstall: true });
+        case 'recover.deep.start': {
+          reply(id, true);
+          let t = 0;
+          const folder = params.destination + '\\Faxina recuperados 2026-11-16 18-30';
+          deepTimer = setInterval(() => {
+            t += 1;
+            emit('recover.progress', { files: t * 37, bytes: t * 41 * MB, percent: Math.min(100, t * 10), elapsed: t * 2, folder });
+            emit('log', { source: 'recover', line: `Pass 1: Scanning and processing disk  ${Math.min(100, t * 10)}%` });
+            if (t >= 10) { clearInterval(deepTimer); emit('recover.done', { files: 370, bytes: 410 * MB, folder }); }
+          }, 400);
+          return;
+        }
+        case 'recover.deep.cancel': clearInterval(deepTimer); emit('recover.cancelled', {}); return reply(id, true);
         case 'account.info': return reply(id, { user: 'usuario', kind: 'local', canChange: true, reason: null, manageUrl: null, minLength: 8 });
         case 'account.changePassword': return setTimeout(() => deliver({ id, ok: false, error: 'Exemplo: a senha atual está incorreta.' }), 600);
         default: return reply(id, true);

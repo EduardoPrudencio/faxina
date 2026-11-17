@@ -113,6 +113,10 @@ const ICONS = {
   key: '<circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3"/><path d="M17 6l3 3"/><path d="M15 8l2 2"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx=".5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  usb: '<rect x="7" y="9" width="10" height="12" rx="2"/><path d="M9 9V3h6v6"/><path d="M11 5.5h.01M13 5.5h.01"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
 };
 const icon = (name, cls = '') => `<span class="ico ${cls}"><svg viewBox="0 0 24 24">${ICONS[name] || ''}</svg></span>`;
 function hydrateIcons(root = document) {
@@ -150,6 +154,13 @@ const state = {
   apps: null, appsLoading: false, appsFilter: 'all', appsQuery: '', uninstalling: null,
   appsSort: store.get('appsSort', { by: 'size', desc: true }),
   account: null, changingPassword: false,
+  hw: null, hwLoading: false, memTimer: null,
+  recover: {
+    tab: 'trash', busy: false,
+    trash: null, trashQuery: '', trashSel: new Set(),
+    versions: { info: null, path: null, snapshots: null, snap: null, entries: null, loading: false, onlyChanged: true, sel: new Set() },
+    deep: { tool: null, source: null, groups: new Set(), mode: 'quick', nameFilter: '', dest: null, running: false, progress: null, result: null },
+  },
 };
 
 const $ = s => document.querySelector(s);
@@ -162,6 +173,8 @@ const TITLES = {
   files: ['Maiores arquivos', 'Os 300 maiores arquivos encontrados na última análise'],
   cleanup: ['Limpeza', 'Coisas que podem ser apagadas com segurança, com quanto cada uma libera'],
   apps: ['Programas', 'Programas instalados, com tamanho e recomendações'],
+  recover: ['Recuperar arquivos', 'Traga de volta o que foi apagado: da Lixeira, de versões anteriores ou direto do disco'],
+  computer: ['Computador', 'Processador, memória e todos os discos conectados'],
   account: ['Conta', 'Senha do usuário deste computador'],
 };
 
@@ -174,13 +187,17 @@ function go(name) {
   $('.main').scrollTop = 0;
   if (name === 'apps' && !state.apps && !state.appsLoading) loadApps();
   if (name === 'account') loadAccount();
+  // Sempre relê: um pendrive pode ter sido conectado desde a última visita.
+  if (name === 'computer' && !state.hwLoading) loadHardware();
+  if (name === 'recover') loadRecover();
+  watchMemory(name === 'computer');
   render();
 }
 
 function render() {
   renderSidebar();
   renderTopActions();
-  ({ overview: renderOverview, explore: renderExplore, files: renderFiles, cleanup: renderCleanup, apps: renderApps, account: renderAccount })[state.view]();
+  ({ overview: renderOverview, explore: renderExplore, files: renderFiles, cleanup: renderCleanup, apps: renderApps, recover: renderRecover, computer: renderComputer, account: renderAccount })[state.view]();
 }
 
 function renderTopActions() {
@@ -193,6 +210,8 @@ function renderTopActions() {
   }
   if (state.view === 'cleanup') a.push(`<button class="btn" data-act="measure-all">${icon('refresh')}Medir de novo</button>`);
   if (state.view === 'apps') a.push(`<button class="btn" data-act="apps-reload" ${state.appsLoading ? 'disabled' : ''}>${icon('refresh')}Atualizar lista</button>`);
+  if (state.view === 'recover' && state.recover.tab !== 'deep') a.push(`<button class="btn" data-act="recover-reload">${icon('refresh')}Atualizar</button>`);
+  if (state.view === 'computer') a.push(`<button class="btn" data-act="hw-reload" ${state.hwLoading ? 'disabled' : ''}>${icon('refresh')}Atualizar</button>`);
   el.innerHTML = a.join('');
 }
 
@@ -856,6 +875,489 @@ function logoColor(s) {
   return `hsl(${h} 55% 52%)`;
 }
 
+// ───────────────────────── recuperar ─────────────────────────
+const RECOVER_TABS = [['trash', 'Lixeira'], ['versions', 'Versões anteriores'], ['deep', 'Recuperação profunda']];
+const DEEP_GROUPS = [['photos', 'Fotos'], ['videos', 'Vídeos'], ['audio', 'Música e áudio'], ['documents', 'Documentos'], ['archives', 'Compactados']];
+const SNAP_STATUS = { deleted: ['danger', 'Apagado'], changed: ['warn', 'Alterado'], same: ['', 'Igual'] };
+
+function loadRecover() {
+  const r = state.recover;
+  if (!r.trash) loadTrash();
+  if (!r.versions.info) bridge.call('recover.versions.info').then(i => { r.versions.info = i; renderRecoverIfOpen(); }).catch(e => toast(e.message, 'err'));
+  if (!r.deep.tool) loadDeepTool();
+  if (!state.hw && !state.hwLoading) loadHardware().then(renderRecoverIfOpen);    // discos de origem e se são SSD
+}
+const renderRecoverIfOpen = () => { if (state.view === 'recover') renderRecover(); };
+
+async function loadTrash() {
+  try { state.recover.trash = await bridge.call('recover.trash.list'); }
+  catch (e) { toast(e.message, 'err'); state.recover.trash = state.recover.trash || []; }
+  const ids = new Set(state.recover.trash.map(i => i.id));
+  state.recover.trashSel = new Set([...state.recover.trashSel].filter(id => ids.has(id)));
+  renderRecoverIfOpen();
+}
+
+async function loadDeepTool() {
+  try { state.recover.deep.tool = await bridge.call('recover.deep.tool'); } catch (e) { toast(e.message, 'err'); }
+  renderRecoverIfOpen();
+}
+
+function renderRecover() {
+  const r = state.recover;
+  const el = view('recover');
+  el.innerHTML = `<div class="chips" style="margin-bottom:16px">${RECOVER_TABS.map(([k, l]) =>
+    `<button class="chip ${r.tab === k ? 'active' : ''}" data-recover-tab="${k}">${l}</button>`).join('')}</div><div id="recoverBody"></div>`;
+  ({ trash: renderTrash, versions: renderVersions, deep: renderDeep })[r.tab]($('#recoverBody'));
+}
+
+const skeletonCard = (h = 200) => `<div class="card"><div class="skeleton" style="height:${h}px"></div></div>`;
+
+// ───── Lixeira ─────
+function renderTrash(el) {
+  const r = state.recover;
+  if (!r.trash) { el.innerHTML = skeletonCard(); return; }
+  const q = r.trashQuery.trim().toLowerCase();
+  const shown = r.trash.filter(i => !q || (i.name + ' ' + i.originalPath).toLowerCase().includes(q));
+  const chosen = r.trash.filter(i => r.trashSel.has(i.id));
+  const allShown = shown.length > 0 && shown.every(i => r.trashSel.has(i.id));
+  el.innerHTML = `
+    <div class="toolbar">
+      <div class="search">${icon('search')}<input class="input" id="trashSearch" placeholder="Buscar na Lixeira" value="${esc(r.trashQuery)}"></div>
+      <span class="muted">${fmtNum(r.trash.length)} ${r.trash.length === 1 ? 'item' : 'itens'} · ${fmtBytes(r.trash.reduce((s, i) => s + i.size, 0))}</span>
+      <button class="btn btn-primary" style="margin-left:auto" data-act="trash-restore" ${chosen.length && !r.busy ? '' : 'disabled'}>
+        ${r.busy ? '<span class="spinner"></span>' : icon('undo')}Restaurar${chosen.length ? ` ${chosen.length} (${fmtBytes(chosen.reduce((s, i) => s + i.size, 0))})` : ''}</button>
+    </div>
+    <div class="card" style="padding:16px 10px 6px">
+      ${!r.trash.length ? `<div class="empty"><p><b>A Lixeira está vazia.</b></p>
+          <p>O que foi apagado com Shift+Delete, esvaziado da Lixeira ou grande demais para ela não passa por aqui: para esses casos, tente a Recuperação profunda.</p></div>`
+      : `<table class="list">
+        <thead><tr><th class="check"><input type="checkbox" data-trash-all ${allShown ? 'checked' : ''} aria-label="Marcar todos"></th><th>Nome</th><th>Estava em</th><th class="r">Apagado</th><th class="r">Tamanho</th></tr></thead>
+        <tbody>${shown.map(i => `<tr>
+          <td class="check"><input type="checkbox" data-trash-sel value="${esc(i.id)}" ${r.trashSel.has(i.id) ? 'checked' : ''} aria-label="Marcar ${esc(i.name)}"></td>
+          <td class="grow"><div class="name-cell">${i.isFolder ? icon('folder', 'folder') : icon('file')}<div class="txt"><b title="${esc(i.name)}">${esc(i.name)}</b></div></div></td>
+          <td class="path-cell muted" title="${esc(i.originalPath)}">${esc(dirName(i.originalPath))}</td>
+          <td class="r muted num">${i.deletedAt ? fmtDate(i.deletedAt) : ''}</td>
+          <td class="r num">${fmtBytes(i.size)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+      ${!shown.length ? `<div class="empty" style="padding:24px">Nada encontrado com essa busca.</div>` : ''}`}
+    </div>
+    <p class="muted hint">Cada item volta para a pasta de onde saiu. Se lá já existir um arquivo com o mesmo nome, o restaurado ganha "(restaurado)" no nome; nada é sobrescrito.</p>`;
+}
+
+async function restoreTrash() {
+  const r = state.recover;
+  r.busy = true;
+  renderRecover();
+  try {
+    reportRestored(await bridge.call('recover.trash.restore', { ids: [...r.trashSel] }));
+    r.trashSel = new Set();
+  } catch (e) { toast(e.message, 'err'); }
+  r.busy = false;
+  await loadTrash();
+}
+
+function reportRestored(list) {
+  const ok = list.filter(x => !x.error), bad = list.filter(x => x.error);
+  if (ok.length) toast(`${ok.length} ${ok.length === 1 ? 'item restaurado' : 'itens restaurados'}${ok.some(x => x.renamed) ? ', alguns com "(restaurado)" no nome' : ''}`, 'ok');
+  if (bad.length) toast(`${bad.length} não ${bad.length === 1 ? 'pôde' : 'puderam'} voltar. Detalhes em Atividade.`, 'err');
+}
+
+// ───── versões anteriores ─────
+function renderVersions(el) {
+  const v = state.recover.versions;
+  if (!v.info) { el.innerHTML = skeletonCard(); return; }
+  if (!v.info.supported) {
+    el.innerHTML = `<div class="card"><div class="empty"><p><b>Não disponível no Linux</b></p><p>${esc(v.info.note)}</p></div></div>`;
+    return;
+  }
+  const fileHistory = `<div class="card" style="margin-top:16px">
+    <div class="card-head"><h3>Histórico de Arquivos</h3>${icon('history')}</div>
+    ${v.info.fileHistory
+      ? `<p class="muted" style="margin-bottom:12px">Está ativado: o Windows guarda cópias das suas pastas pessoais em outro disco. Ele tem a própria tela de restauração.</p>
+         <button class="btn" data-act="file-history">${icon('open')}Abrir o Histórico de Arquivos</button>`
+      : `<p class="muted">Não está ativado neste computador. Com ele, o Windows guarda cópias automáticas das suas pastas em um disco externo. Para ativar: Painel de Controle › Histórico de Arquivos.</p>`}
+  </div>`;
+
+  if (!state.info?.isAdmin) {
+    el.innerHTML = `<div class="callout info">${icon('info')}<div>Os pontos de restauração guardam cópias do disco inteiro, inclusive dos seus arquivos, mas só dá para abrir com administrador.</div>${adminButton()}</div>${fileHistory}`;
+    return;
+  }
+
+  const parent = v.path && v.path.replace(/\\[^\\]+\\?$/, '');
+  const head = `<div class="toolbar">
+      <button class="btn" data-act="versions-pick">${icon('folder')}${v.path ? 'Outra pasta…' : 'Escolher pasta…'}</button>
+      ${v.path ? `<button class="btn" data-act="versions-up" ${parent && parent !== v.path && parent.length >= 2 ? '' : 'disabled'}>${icon('chevron-up')}Pasta acima</button>
+        <code class="path-chip" title="${esc(v.path)}">${esc(v.path)}</code>` : ''}
+    </div>`;
+
+  let body;
+  if (!v.path) body = `<div class="empty"><p><b>Em que pasta estava o arquivo?</b></p><p>Escolha a pasta (por exemplo, Documentos) e veja como ela era em cada ponto de restauração.</p></div>`;
+  else if (v.loading && !v.snapshots) body = `<div class="row muted"><span class="spinner"></span>Procurando pontos de restauração…</div>`;
+  else if (!v.snapshots?.length) body = `<div class="empty"><p><b>Nenhum ponto de restauração tem esta pasta.</b></p>
+      <p>O Windows cria pontos de restauração em atualizações e instalações quando a Proteção do Sistema está ativada para o disco.</p></div>`;
+  else {
+    const entries = v.entries || [];
+    const shown = v.onlyChanged ? entries.filter(e => e.status !== 'same') : entries;
+    const restorable = shown.filter(e => e.status !== 'folder');
+    const chosen = entries.filter(e => v.sel.has(e.name));
+    body = `
+      <div class="chips" style="margin-bottom:14px">${v.snapshots.map(s =>
+        `<button class="chip ${v.snap === s.id ? 'active' : ''}" data-snap="${esc(s.id)}">${esc(fmtDateTime(s.created))}</button>`).join('')}</div>
+      <div class="toolbar">
+        <label class="show-pw"><input type="checkbox" data-act-change="only-changed" ${v.onlyChanged ? 'checked' : ''}>Mostrar só o que foi apagado ou mudou</label>
+        <button class="btn btn-primary" style="margin-left:auto" data-act="versions-restore" ${chosen.length && !state.recover.busy ? '' : 'disabled'}>
+          ${state.recover.busy ? '<span class="spinner"></span>' : icon('undo')}Restaurar${chosen.length ? ' ' + chosen.length : ''}</button>
+      </div>
+      ${v.loading ? `<div class="row muted"><span class="spinner"></span>Abrindo a versão…</div>` : !shown.length
+        ? `<div class="empty" style="padding:24px">${v.onlyChanged && entries.length ? 'Nesta versão a pasta está igual à de hoje.' : 'Pasta vazia nesta versão.'}</div>`
+        : `<table class="list">
+          <thead><tr><th class="check">${restorable.length ? `<input type="checkbox" data-snap-all ${restorable.every(e => v.sel.has(e.name)) ? 'checked' : ''} aria-label="Marcar todos">` : ''}</th><th>Nome</th><th>Situação hoje</th><th class="r">Modificado</th><th class="r">Tamanho</th></tr></thead>
+          <tbody>${shown.map(e => {
+            const st = SNAP_STATUS[e.status];
+            return `<tr>
+              <td class="check">${e.status !== 'folder' ? `<input type="checkbox" data-snap-sel value="${esc(e.name)}" ${v.sel.has(e.name) ? 'checked' : ''} aria-label="Marcar ${esc(e.name)}">` : ''}</td>
+              <td class="grow"><div class="name-cell">${e.isFolder ? icon('folder', 'folder') : icon('file')}<div class="txt">${e.status === 'folder'
+                ? `<a href="#" class="link" data-snap-open="${esc(e.name)}">${esc(e.name)}</a>` : `<b title="${esc(e.name)}">${esc(e.name)}</b>`}</div></div></td>
+              <td>${st ? `<span class="badge ${st[0]}">${st[1]}</span>` : '<span class="muted">pasta</span>'}</td>
+              <td class="r muted num">${fmtDate(e.modified)}</td>
+              <td class="r num">${e.isFolder ? '' : fmtBytes(e.size)}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>`}
+      <p class="muted hint">Restaurar copia o arquivo desta versão para a pasta. Se o atual ainda existir, ele fica como está e a cópia ganha "(versão de …)" no nome.</p>`;
+  }
+  el.innerHTML = `${head}<div class="card">${body}</div>${fileHistory}`;
+}
+
+async function openVersionsFolder(path) {
+  const v = state.recover.versions;
+  Object.assign(v, { path, snapshots: null, entries: null, loading: true, sel: new Set() });
+  renderRecoverIfOpen();
+  try {
+    v.snapshots = await bridge.call('recover.versions.list', { path });
+    // Mantém a versão escolhida ao navegar entre pastas, se ela tiver a pasta nova
+    if (!v.snapshots.some(s => s.id === v.snap)) v.snap = v.snapshots[0]?.id || null;
+    if (v.snap) v.entries = await bridge.call('recover.versions.browse', { id: v.snap, path });
+  } catch (e) { toast(e.message, 'err'); v.snapshots = v.snapshots || []; }
+  v.loading = false;
+  renderRecoverIfOpen();
+}
+
+async function selectSnapshot(id) {
+  const v = state.recover.versions;
+  Object.assign(v, { snap: id, loading: true, sel: new Set() });
+  renderRecoverIfOpen();
+  try { v.entries = await bridge.call('recover.versions.browse', { id, path: v.path }); }
+  catch (e) { toast(e.message, 'err'); }
+  v.loading = false;
+  renderRecoverIfOpen();
+}
+
+async function restoreVersions() {
+  const v = state.recover.versions;
+  state.recover.busy = true;
+  renderRecover();
+  try {
+    reportRestored(await bridge.call('recover.versions.restore', { id: v.snap, path: v.path, names: [...v.sel] }));
+    v.sel = new Set();
+  } catch (e) { toast(e.message, 'err'); }
+  state.recover.busy = false;
+  await selectSnapshot(v.snap);
+}
+
+// ───── recuperação profunda ─────
+// Volumes conhecidos, com o disco de cada um (para o aviso de SSD)
+function deepVolumes() {
+  const hw = state.hw;
+  if (!hw) return [];
+  return [...hw.disks.flatMap(d => d.volumes.map(v => ({ ...v, disk: d }))), ...hw.others.map(v => ({ ...v, disk: null }))];
+}
+
+// Volume que contém um caminho: o de nome mais longo que é prefixo dele
+function volumeOf(path) {
+  if (!path) return null;
+  const sep = isLinux() ? '/' : '\\';
+  const norm = s => { s = s.endsWith(sep) ? s : s + sep; return isLinux() ? s : s.toUpperCase(); };
+  const p = norm(path);
+  return deepVolumes().filter(v => p.startsWith(norm(v.name))).sort((a, b) => b.name.length - a.name.length)[0] || null;
+}
+
+function renderDeep(el) {
+  const d = state.recover.deep;
+  if (!d.tool || !state.hw) { el.innerHTML = skeletonCard(260); return; }
+  const tool = d.tool;
+  const vols = deepVolumes();
+  const src = vols.find(v => v.name === d.source);
+  const destVol = volumeOf(d.dest);
+  const sameDisk = src && destVol && destVol.name === src.name;
+  const ssd = src?.disk?.media === 'ssd' && !src.disk.removable;
+  const quickOk = isLinux() || !src || src.format.toUpperCase() === 'NTFS';
+  const mode = quickOk ? d.mode : 'full';
+
+  const intro = `<div class="callout">${icon('alert')}<div><b>Quanto menos o disco for usado depois de apagar, maiores as chances.</b>
+    Evite instalar programas ou baixar arquivos no disco de onde os arquivos sumiram, e salve o que for recuperado sempre em <b>outro</b> disco.</div></div>`;
+
+  if (!tool.installed) {
+    el.innerHTML = `${intro}<div class="card">
+      <div class="card-head"><h3>Instale o ${esc(tool.name)}</h3>${icon('box')}</div>
+      <p class="muted" style="margin-bottom:14px">${isLinux()
+        ? 'A recuperação profunda usa o PhotoRec, gratuito e de código aberto, que encontra arquivos pelo conteúdo, até em cartões e pendrives formatados. Instale pelo terminal:'
+        : 'A recuperação profunda usa o Windows File Recovery, ferramenta gratuita da própria Microsoft. Ela vem da Microsoft Store; depois de instalar, volte aqui.'}</p>
+      ${tool.installCommand ? `<p><code>${esc(tool.installCommand)}</code></p>` : ''}
+      <div class="row" style="gap:8px;margin-top:14px">
+        ${tool.canOpenInstall ? `<button class="btn btn-primary" data-act="deep-install">${icon('open')}Abrir na Microsoft Store</button>`
+          : `<button class="btn btn-primary" data-act="deep-copy">${icon('terminal')}Copiar comando</button>`}
+        <button class="btn" data-act="deep-recheck">${icon('refresh')}Já instalei, verificar</button>
+      </div></div>`;
+    return;
+  }
+
+  if (d.running || d.result) { el.innerHTML = intro + deepStatus(); return; }
+
+  const off = d.running ? 'disabled' : '';
+  el.innerHTML = `${intro}
+    <div class="grid g-2 deep-form">
+      <div class="card">
+        <div class="card-head"><h3><span class="step">1</span>Onde os arquivos estavam</h3></div>
+        <div class="opt-list">${vols.map(v => `
+          <label class="opt ${d.source === v.name ? 'active' : ''}">
+            <input type="radio" name="deepSource" value="${esc(v.name)}" ${d.source === v.name ? 'checked' : ''} ${off}>
+            ${icon(v.disk?.removable ? 'usb' : 'hdd')}
+            <span class="txt"><b>${esc(v.name)} <span class="muted">${esc(v.label)}</span></b>
+              <small>${esc(v.format)}${v.disk ? ' · ' + esc(v.disk.model) : ''}${v.disk ? ' · ' + esc([v.disk.media?.toUpperCase(), BUS_LABELS[v.disk.bus]].filter(Boolean).join(' ')) : ''}</small></span>
+          </label>`).join('')}</div>
+        ${ssd ? `<div class="callout" style="margin:14px 0 0">${icon('info')}<div><b>Este disco é um SSD.</b> SSDs apagam de verdade o espaço liberado pouco depois (TRIM), então arquivos apagados há mais que alguns minutos raramente voltam. Pendrives, cartões e HDs têm chances bem maiores.</div></div>` : ''}
+      </div>
+      <div class="card">
+        <div class="card-head"><h3><span class="step">2</span>O que procurar</h3></div>
+        <div class="chips">${DEEP_GROUPS.map(([k, l]) => `<button class="chip ${d.groups.has(k) ? 'active' : ''}" data-deep-group="${k}" ${off}>${l}</button>`).join('')}</div>
+        <p class="muted hint" style="margin-top:8px">${d.groups.size ? 'Só os tipos marcados.' : 'Nenhum marcado: procura todos os tipos (demora mais e traz muito mais coisa).'}</p>
+        ${!isLinux() ? `<label class="field"><span>Parte do nome ou da pasta <span class="muted">(opcional)</span></span>
+          <input class="input" id="deepName" placeholder="ex.: contrato, ferias, \\Users\\${esc(state.info?.user || 'voce')}\\Documents\\" value="${esc(d.nameFilter)}" ${off}></label>` : ''}
+        <div class="card-head" style="margin-top:18px"><h3><span class="step">3</span>Como procurar</h3></div>
+        <div class="opt-list">
+          <label class="opt ${mode === 'quick' ? 'active' : ''} ${quickOk ? '' : 'disabled'}">
+            <input type="radio" name="deepMode" value="quick" ${mode === 'quick' ? 'checked' : ''} ${quickOk ? off : 'disabled'}>
+            <span class="txt"><b>Rápida</b><small>${isLinux() ? 'Só no espaço livre, onde ficam os apagados.'
+              : quickOk ? 'Arquivos apagados há pouco em discos NTFS. Costuma manter nomes e pastas.' : 'Só funciona em NTFS; este disco é ' + esc(src.format) + '.'}</small></span>
+          </label>
+          <label class="opt ${mode === 'full' ? 'active' : ''}">
+            <input type="radio" name="deepMode" value="full" ${mode === 'full' ? 'checked' : ''} ${off}>
+            <span class="txt"><b>Completa</b><small>${isLinux() ? 'O disco inteiro, inclusive o que ainda existe. Mais lenta.'
+              : 'Procura pelo conteúdo: acha mais, inclusive em pendrives, cartões e discos formatados. Mais lenta e nem sempre traz os nomes.'}</small></span>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><h3><span class="step">4</span>Onde salvar o que for encontrado</h3></div>
+      <div class="row" style="gap:10px;flex-wrap:wrap">
+        <button class="btn" data-act="deep-dest" ${off}>${icon('folder')}${d.dest ? 'Trocar pasta…' : 'Escolher pasta…'}</button>
+        ${d.dest ? `<code class="path-chip" title="${esc(d.dest)}">${esc(d.dest)}</code>` : '<span class="muted">Use um pendrive, HD externo ou outro disco.</span>'}
+      </div>
+      ${sameDisk ? `<p class="err-text">Esta pasta está no mesmo disco de onde os arquivos sumiram. Escolha outro disco.</p>` : ''}
+      <div class="row" style="margin-top:18px;gap:12px">
+        ${state.info?.isAdmin
+          ? `<button class="btn btn-primary" data-act="deep-start" ${src && d.dest && !sameDisk ? '' : 'disabled'}>${icon('search')}Iniciar recuperação</button>`
+          : adminButton(isLinux() ? 'Precisa de root' : 'Reabrir como admin para recuperar')}
+        <span class="muted hint">Pode levar de minutos a horas, conforme o tamanho do disco.</span>
+      </div>
+    </div>`;
+}
+
+function deepStatus() {
+  const d = state.recover.deep;
+  if (d.result) {
+    const r = d.result;
+    return `<div class="card">
+      <div class="card-head"><h3>${r.cancelled ? 'Recuperação interrompida' : r.error ? 'A recuperação falhou' : 'Recuperação concluída'}</h3>${icon(r.error ? 'alert' : 'check')}</div>
+      ${r.error ? `<p class="err-text">${esc(r.error)}</p>` : `<div class="hw-big">${fmtNum(r.files)} ${r.files === 1 ? 'arquivo' : 'arquivos'}</div>
+        <div class="muted">${fmtBytes(r.bytes)} em <code>${esc(r.folder)}</code></div>
+        <p class="muted hint" style="margin-top:12px">${isLinux() ? 'O PhotoRec dá nomes novos aos arquivos (f12345.jpg) e separa em pastas recup_dir.1, .2… Abra e confira um a um.'
+          : 'Arquivos achados pelo conteúdo podem vir com nomes genéricos. Arquivos corrompidos (parte sobrescrita) podem não abrir.'}</p>`}
+      <div class="row" style="gap:8px;margin-top:16px">
+        ${r.folder ? `<button class="btn btn-primary" data-reveal="${esc(r.folder)}">${icon('open')}Abrir pasta</button>` : ''}
+        <button class="btn" data-act="deep-again">${icon('refresh')}Nova recuperação</button>
+      </div></div>`;
+  }
+  const p = d.progress || {};
+  return `<div class="card">
+    <div class="card-head"><h3>Recuperando ${esc(d.source)}</h3><span class="spinner"></span></div>
+    <div class="progress ${p.percent == null ? 'indeterminate' : ''}"><span style="${p.percent != null ? `width:${p.percent}%` : ''}"></span></div>
+    <div class="nums deep-nums">
+      <div class="stat"><span class="label">Encontrados</span><span class="value num">${fmtNum(p.files || 0)}</span></div>
+      <div class="stat"><span class="label">Tamanho</span><span class="value num">${fmtBytes(p.bytes || 0)}</span></div>
+      <div class="stat"><span class="label">Andamento</span><span class="value num">${p.percent != null ? p.percent + '%' : '—'}</span></div>
+      <div class="stat"><span class="label">Tempo</span><span class="value num">${fmtTime(p.elapsed || 0)}</span></div>
+    </div>
+    <p class="muted hint">Os arquivos vão aparecendo em <code>${esc(p.folder || d.dest)}</code>. Detalhes em Atividade, aqui embaixo.</p>
+    <button class="btn" data-act="deep-cancel" style="margin-top:12px">${icon('stop')}Parar</button>
+  </div>`;
+}
+
+async function startDeep() {
+  const d = state.recover.deep;
+  const groups = DEEP_GROUPS.filter(([k]) => d.groups.has(k)).map(([, l]) => l.toLowerCase());
+  const src = deepVolumes().find(v => v.name === d.source);
+  const mode = isLinux() || src?.format.toUpperCase() === 'NTFS' ? d.mode : 'full';
+  const ok = await confirmModal({
+    title: 'Iniciar a recuperação?', icon: 'search', confirm: 'Iniciar',
+    body: `<p>Procurar <b>${groups.length ? groups.join(', ') : 'todos os tipos de arquivo'}</b> em <code>${esc(d.source)}</code>
+      (modo ${mode === 'full' ? 'completo' : 'rápido'}) e salvar em <code>${esc(d.dest)}</code>.</p>
+      <p>Enquanto roda, evite usar <code>${esc(d.source)}</code>. Dá para parar a qualquer momento; o que já foi achado fica salvo.</p>`,
+  });
+  if (!ok) return;
+  try {
+    await bridge.call('recover.deep.start', { source: d.source, destination: d.dest, mode, groups: [...d.groups], nameFilter: d.nameFilter || null });
+    Object.assign(d, { running: true, result: null, progress: { folder: null } });
+    openDrawer(true);
+  } catch (e) { toast(e.message, 'err'); }
+  renderRecoverIfOpen();
+}
+
+bridge.on('recover.progress', p => {
+  const d = state.recover.deep;
+  d.progress = p;
+  if (state.view === 'recover' && state.recover.tab === 'deep') renderRecover();
+});
+bridge.on('recover.done', r => { Object.assign(state.recover.deep, { running: false, result: r }); toast(`Recuperação concluída: ${fmtNum(r.files)} arquivo(s)`, 'ok'); renderRecoverIfOpen(); });
+bridge.on('recover.cancelled', () => {
+  const d = state.recover.deep;
+  Object.assign(d, { running: false, result: { cancelled: true, files: d.progress?.files || 0, bytes: d.progress?.bytes || 0, folder: d.progress?.folder } });
+  renderRecoverIfOpen();
+});
+bridge.on('recover.error', e => { Object.assign(state.recover.deep, { running: false, result: { error: e.message } }); renderRecoverIfOpen(); });
+
+// ───────────────────────── computador ─────────────────────────
+const BUS_LABELS = { nvme: 'NVMe', sata: 'SATA', usb: 'USB', sd: 'Cartão SD', scsi: 'SCSI', sas: 'SAS', raid: 'RAID', virtual: 'Virtual' };
+const HEALTH = { ok: ['ok', 'Saudável'], warn: ['warn', 'Atenção'], bad: ['danger', 'Com defeito'] };
+
+async function loadHardware() {
+  state.hwLoading = true;
+  if (state.view === 'computer') renderTopActions();
+  try {
+    // system.info junto: deixa o novo pendrive também na lista do Explorar disco
+    [state.hw] = await Promise.all([bridge.call('system.hardware'), refreshInfo()]);
+  } catch (e) { toast(e.message, 'err'); }
+  state.hwLoading = false;
+  if (state.view === 'computer') { renderTopActions(); renderComputer(); }
+}
+
+// A memória muda o tempo todo: enquanto a tela está aberta, pergunta de novo a cada 3 s.
+function watchMemory(on) {
+  clearInterval(state.memTimer);
+  if (!on) return;
+  state.memTimer = setInterval(async () => {
+    if (!state.hw || document.hidden) return;
+    try { state.hw.memory.now = await bridge.call('system.memory'); } catch { return; }
+    const el = $('#hwMemory');
+    if (el && state.view === 'computer') el.innerHTML = memoryBody();
+  }, 3000);
+}
+
+function fmtUptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  if (d > 0) return `${d} ${d === 1 ? 'dia' : 'dias'}${h ? ` e ${h} h` : ''}`;
+  return h > 0 ? `${h} h ${m} min` : `${m} min`;
+}
+const fmtGHz = mhz => nf1.format(mhz / 1000) + ' GHz';
+const kv = rows => `<dl class="kv">${rows.filter(r => r[1]).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+const usageColor = f => f > .9 ? 'var(--danger)' : f > .75 ? 'var(--warn)' : 'var(--accent)';
+
+function memoryBody() {
+  const { now, modules, slots } = state.hw.memory;
+  const installed = modules.reduce((s, x) => s + x.size, 0);
+  const used = now.total - now.available, f = now.total ? used / now.total : 0;
+  // Pentes iguais viram "2 × 16 GB DDR5 · 5200 MT/s"
+  const groups = {};
+  modules.forEach(x => { const k = [fmtBytes(x.size), x.type, x.speed ? x.speed + ' MT/s' : ''].filter(Boolean).join(' '); groups[k] = (groups[k] || 0) + 1; });
+  const modulesText = Object.entries(groups).map(([k, n]) => `${n} × ${k}`).join(' + ');
+  const swapUsed = now.swapTotal - now.swapFree;
+  return `
+    <div class="hw-big">${fmtBytes(installed || now.total)}</div>
+    <div class="muted">${installed && installed - now.total > 2 ** 28 ? `${fmtBytes(now.total)} utilizáveis pelo sistema` : 'de memória RAM'}</div>
+    <div class="progress" style="margin:16px 0 8px"><span style="width:${f * 100}%;background:${usageColor(f)}"></span></div>
+    <div class="row hw-usage"><span><b class="num">${fmtBytes(used)}</b> em uso · ${pct(f)}</span><span class="muted num">${fmtBytes(now.available)} livres</span></div>
+    ${kv([
+      ['Pentes', esc(modulesText)],
+      ['Encaixes', slots >= modules.length && slots > 0 ? `${modules.length} de ${slots} ocupados${slots > modules.length ? ' · dá para adicionar mais' : ''}` : ''],
+      ['Swap', now.swapTotal > 0 ? `${fmtBytes(swapUsed)} em uso de ${fmtBytes(now.swapTotal)}` : ''],
+    ])}
+    <div class="live muted"><span class="live-dot"></span>Atualiza a cada 3 segundos</div>`;
+}
+
+function volumeRow(v) {
+  const used = usedOf(v), f = v.total ? used / v.total : 0;
+  return `<div class="vol">
+    <div class="vol-top">
+      <span class="vol-name"><b>${esc(v.name)}</b> <span class="muted">${esc(v.label)} · ${esc(v.format)}</span></span>
+      <span class="muted num">${fmtBytes(v.free)} livres de ${fmtBytes(v.total)}</span>
+      <button class="btn btn-sm" data-act="scan-volume" data-path="${esc(v.name)}" ${state.scanning ? 'disabled' : ''}>${icon('play')}Analisar</button>
+    </div>
+    <div class="progress"><span style="width:${f * 100}%;background:${usageColor(f)}"></span></div>
+  </div>`;
+}
+
+function diskBlock(d) {
+  const kind = [d.media?.toUpperCase(), BUS_LABELS[d.bus]].filter(Boolean).join(' · ');
+  const health = HEALTH[d.health];
+  const badges = [
+    kind && `<span class="badge">${esc(kind)}</span>`,
+    d.system && `<span class="badge accent">Sistema</span>`,
+    d.removable && `<span class="badge">Removível</span>`,
+    health && `<span class="badge ${health[0]}" title="Estado informado pelo próprio disco">${health[1]}</span>`,
+  ].filter(Boolean).join('');
+  return `<div class="disk">
+    <div class="disk-head">
+      <div class="stat-icon" style="background:var(--accent-soft);color:var(--accent)">${icon(d.removable ? 'usb' : 'hdd')}</div>
+      <div class="txt"><b title="${esc(d.model)}">${esc(d.model)}</b><div class="disk-badges">${badges}</div></div>
+      <div class="disk-size num">${fmtBytes(d.size)}</div>
+    </div>
+    ${d.volumes.length
+      ? `<div class="vol-list">${d.volumes.map(volumeRow).join('')}</div>`
+      : `<div class="muted vol-empty">${isLinux() ? 'Nenhuma partição montada.' : 'Sem unidade com letra (só partições do sistema, ou disco sem formatar).'}</div>`}
+  </div>`;
+}
+
+function renderComputer() {
+  const el = view('computer');
+  const hw = state.hw;
+  if (!hw) {
+    el.innerHTML = `<div class="grid g-3">${[1, 2, 3].map(() => `<div class="card"><div class="skeleton" style="height:180px"></div></div>`).join('')}</div>`;
+    return;
+  }
+  const { computer: c, cpu } = hw;
+  const totalDisks = hw.disks.reduce((s, d) => s + d.size, 0);
+  el.innerHTML = `
+    <div class="grid g-3">
+      <div class="card">
+        <div class="card-head"><h3>Este computador</h3>${icon('monitor')}</div>
+        <div class="hw-big">${esc(c.model || c.machine)}</div>
+        <div class="muted">${esc(c.maker || (state.info?.isWsl ? 'Linux no WSL' : ''))}&nbsp;</div>
+        ${kv([['Nome', esc(c.machine)], ['Sistema', esc(c.os)], ['Ligado há', c.uptimeSeconds ? fmtUptime(c.uptimeSeconds) : '']])}
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Processador</h3>${icon('cpu')}</div>
+        <div class="hw-big hw-cpu" title="${esc(cpu.name || '')}">${esc(cpu.name || 'Processador')}</div>
+        ${kv([
+          ['Núcleos', `${cpu.cores}`],
+          ['Threads', `${cpu.threads}`],
+          ['Clock', cpu.baseMhz ? `${fmtGHz(cpu.baseMhz)} (base)` : cpu.maxMhz ? `até ${fmtGHz(cpu.maxMhz)}` : ''],
+        ])}
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Memória</h3>${icon('memory')}</div>
+        <div id="hwMemory">${memoryBody()}</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><h3>Discos</h3><span class="muted">${hw.disks.length} ${hw.disks.length === 1 ? 'disco' : 'discos'} · ${fmtBytes(totalDisks)} no total</span></div>
+      <div class="disk-list">${hw.disks.map(diskBlock).join('') || '<div class="empty">Nenhum disco encontrado.</div>'}</div>
+      ${hw.others.length ? `<div class="disk"><div class="disk-head"><div class="txt"><b>Outras unidades</b></div></div><div class="vol-list">${hw.others.map(volumeRow).join('')}</div></div>` : ''}
+    </div>`;
+}
+
 // ───────────────────────── conta ─────────────────────────
 const ACCOUNT_KINDS = { local: 'Conta local do Windows', microsoft: 'Conta Microsoft', domain: 'Conta de domínio (empresa)', linux: 'Usuário Linux' };
 
@@ -1016,6 +1518,8 @@ function toast(msg, kind = '') {
 // ───────────────────────── util ─────────────────────────
 const dateFmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
 function fmtDate(s) { if (!s) return ''; const d = new Date(s); return isNaN(d) || d.getFullYear() < 1990 ? '' : dateFmt.format(d).replaceAll(' de ', ' ').replace('.', ''); }
+const dateTimeFmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+function fmtDateTime(s) { const d = new Date(s); return isNaN(d) ? '' : dateTimeFmt.format(d).replaceAll(' de ', ' ').replace('.', ''); }
 function fmtTime(sec) { sec = Math.round(sec); return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}min ${sec % 60}s`; }
 function relDays(s) {
   const days = Math.floor((Date.now() - new Date(s)) / 864e5);
@@ -1081,6 +1585,41 @@ document.addEventListener('click', async e => {
       case 'account-manage': return bridge.call('account.openManage').catch(err => toast(err.message, 'err'));
       case 'measure-all': return measureAll();
       case 'apps-reload': return loadApps();
+      case 'hw-reload': return loadHardware();
+      case 'recover-reload': {
+        const r = state.recover;
+        if (r.tab === 'trash') return loadTrash();
+        if (r.tab === 'versions' && r.versions.path) return openVersionsFolder(r.versions.path);
+        return;
+      }
+      case 'trash-restore': return restoreTrash();
+      case 'file-history': return bridge.call('recover.versions.fileHistory').catch(err => toast(err.message, 'err'));
+      case 'versions-pick': {
+        const p = await pickFolder('Pasta onde estava o arquivo');
+        if (p) openVersionsFolder(p);
+        return;
+      }
+      case 'versions-up': {
+        const v = state.recover.versions;
+        const up = v.path.replace(/\\[^\\]+\\?$/, '');
+        return openVersionsFolder(/^[A-Za-z]:$/.test(up) ? up + '\\' : up);
+      }
+      case 'versions-restore': return restoreVersions();
+      case 'deep-install': return bridge.call('recover.deep.install').catch(err => toast(err.message, 'err'));
+      case 'deep-copy':
+        try { await navigator.clipboard.writeText(state.recover.deep.tool.installCommand); toast('Comando copiado', 'ok'); }
+        catch { toast('Não consegui copiar; selecione o texto.', 'err'); }
+        return;
+      case 'deep-recheck': state.recover.deep.tool = null; renderRecover(); return loadDeepTool();
+      case 'deep-dest': {
+        const p = await pickFolder('Pasta para salvar os arquivos recuperados');
+        if (p) { state.recover.deep.dest = p; renderRecover(); }
+        return;
+      }
+      case 'deep-start': return startDeep();
+      case 'deep-cancel': return bridge.call('recover.deep.cancel');
+      case 'deep-again': state.recover.deep.result = null; return renderRecover();
+      case 'scan-volume': go('explore'); return startScan(a.dataset.path);
       case 'nm-pick': {
         const p = await pickFolder('Pasta dos seus projetos');
         if (!p) return;
@@ -1127,6 +1666,26 @@ document.addEventListener('click', async e => {
   const af = e.target.closest('[data-apps-filter]');
   if (af) { state.appsFilter = af.dataset.appsFilter; return renderApps(); }
 
+  const rt = e.target.closest('[data-recover-tab]');
+  if (rt) { state.recover.tab = rt.dataset.recoverTab; renderTopActions(); return renderRecover(); }
+
+  const sn = e.target.closest('[data-snap]');
+  if (sn) return selectSnapshot(sn.dataset.snap);
+
+  const so = e.target.closest('[data-snap-open]');
+  if (so) {
+    e.preventDefault();
+    const base = state.recover.versions.path;
+    return openVersionsFolder(base.replace(/\\$/, '') + '\\' + so.dataset.snapOpen);
+  }
+
+  const dg = e.target.closest('[data-deep-group]');
+  if (dg) {
+    const g = state.recover.deep.groups;
+    g.has(dg.dataset.deepGroup) ? g.delete(dg.dataset.deepGroup) : g.add(dg.dataset.deepGroup);
+    return renderRecover();
+  }
+
   const as = e.target.closest('[data-apps-sort]');
   if (as) {
     const by = as.dataset.appsSort;
@@ -1152,6 +1711,31 @@ document.addEventListener('change', e => {
     renderSidebar();
     return;
   }
+  const r = state.recover;
+  if (e.target.matches('[data-trash-sel]')) {
+    e.target.checked ? r.trashSel.add(e.target.value) : r.trashSel.delete(e.target.value);
+    return renderRecover();
+  }
+  if (e.target.matches('[data-trash-all]')) {
+    const q = r.trashQuery.trim().toLowerCase();
+    r.trash.filter(i => !q || (i.name + ' ' + i.originalPath).toLowerCase().includes(q))
+      .forEach(i => e.target.checked ? r.trashSel.add(i.id) : r.trashSel.delete(i.id));
+    return renderRecover();
+  }
+  if (e.target.matches('[data-snap-sel]')) {
+    e.target.checked ? r.versions.sel.add(e.target.value) : r.versions.sel.delete(e.target.value);
+    return renderRecover();
+  }
+  if (e.target.matches('[data-snap-all]')) {
+    const v = r.versions;
+    (v.entries || []).filter(x => x.status !== 'folder' && (!v.onlyChanged || x.status !== 'same'))
+      .forEach(x => e.target.checked ? v.sel.add(x.name) : v.sel.delete(x.name));
+    return renderRecover();
+  }
+  if (e.target.matches('[data-act-change="only-changed"]')) { r.versions.onlyChanged = e.target.checked; return renderRecover(); }
+  if (e.target.name === 'deepSource') { r.deep.source = e.target.value; return renderRecover(); }
+  if (e.target.name === 'deepMode') { r.deep.mode = e.target.value; return renderRecover(); }
+
   if (e.target.matches('[data-act-change="nm-idle"]')) {
     state.cleanup.nm.idleDays = +e.target.value;
     store.set('nmIdle', state.cleanup.nm.idleDays);
@@ -1169,6 +1753,16 @@ document.addEventListener('input', e => {
     ['pwCurrent', 'pwNext', 'pwConfirm'].forEach(id => { $('#' + id).type = e.target.checked ? 'text' : 'password'; });
     return;
   }
+  if (e.target.id === 'trashSearch') {
+    state.recover.trashQuery = e.target.value;
+    const pos = e.target.selectionStart;
+    renderRecover();
+    const s = $('#trashSearch');
+    s.focus();
+    s.setSelectionRange(pos, pos);
+    return;
+  }
+  if (e.target.id === 'deepName') { state.recover.deep.nameFilter = e.target.value; return; }
   if (e.target.id === 'appSearch') {
     state.appsQuery = e.target.value;
     const pos = e.target.selectionStart;

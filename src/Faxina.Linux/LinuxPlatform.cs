@@ -11,6 +11,9 @@ public sealed class LinuxPlatform : IPlatform
     public IReadOnlyList<CleanupTarget> Cleanups => LinuxCleanups.All;
 
     public object GetSystemInfo() => LinuxSystem.Get();
+    public HardwareInfo GetHardware() => LinuxHardware.Get();
+    public MemoryNow GetMemory() => LinuxHardware.Memory();
+    public IRecovery Recovery { get; } = new LinuxRecovery();
     public List<string> DefaultProjectRoots() => LinuxCleanups.DefaultProjectRoots();
     public Task<List<InstalledApp>> ListAppsAsync(CancellationToken ct) => LinuxApps.ListAsync(ct);
     public Task<int> UninstallAsync(string id, Action<string> log, CancellationToken ct) => LinuxApps.UninstallAsync(id, log, ct);
@@ -105,32 +108,30 @@ public static class LinuxSystem
     // /proc/mounts escreve espaços e afins como \040
     private static string Unescape(string s) => Regex.Replace(s, @"\\([0-7]{3})", m => ((char)Convert.ToInt32(m.Groups[1].Value, 8)).ToString());
 
+    /// <summary>Volumes com dados de verdade, junto com o dispositivo de onde vêm (/dev/sda1, /dev/mapper/…).</summary>
+    public static List<(string Device, Volume Volume)> Volumes() => Mounts()
+        .Where(m => DiskTypes.Contains(m.Type) && !m.Point.StartsWith("/snap/", StringComparison.Ordinal)
+                    && !m.Point.StartsWith("/mnt/wsl", StringComparison.Ordinal) && !m.Point.StartsWith("/usr/lib/wsl", StringComparison.Ordinal))
+        .GroupBy(m => m.Device).Select(g => g.OrderBy(m => m.Point.Length).First())   // bind mounts do mesmo disco
+        .Select(m =>
+        {
+            try
+            {
+                var d = new DriveInfo(m.Point);
+                if (d.TotalSize < 512L << 20) return default;    // /boot/efi e afins
+                return (m.Device, new Volume(m.Point, m.Point == "/" ? "Sistema" : Path.GetFileName(m.Point), m.Type,
+                    d.TotalSize, d.AvailableFreeSpace,
+                    // ext4 reserva ~5% para o root: não está "usado", mas também não está livre para o usuário.
+                    Reserved: Math.Max(0, d.TotalFreeSpace - d.AvailableFreeSpace),
+                    Removable: LinuxHardware.IsRemovable(m.Device)));
+            }
+            catch { return default; }
+        })
+        .Where(x => x.Item2 != null).OrderBy(x => x.Item2.Name == "/" ? "" : x.Item2.Name).ToList();
+
     public static object Get()
     {
-        var drives = Mounts()
-            .Where(m => DiskTypes.Contains(m.Type) && !m.Point.StartsWith("/snap/", StringComparison.Ordinal)
-                        && !m.Point.StartsWith("/mnt/wsl", StringComparison.Ordinal) && !m.Point.StartsWith("/usr/lib/wsl", StringComparison.Ordinal))
-            .GroupBy(m => m.Device).Select(g => g.OrderBy(m => m.Point.Length).First())   // bind mounts do mesmo disco
-            .Select(m =>
-            {
-                try
-                {
-                    var d = new DriveInfo(m.Point);
-                    if (d.TotalSize < 512L << 20) return null;    // /boot/efi e afins
-                    return new
-                    {
-                        name = m.Point,
-                        label = m.Point == "/" ? "Sistema" : Path.GetFileName(m.Point),
-                        format = m.Type,
-                        total = d.TotalSize,
-                        free = d.AvailableFreeSpace,
-                        // ext4 reserva ~5% para o root: não está "usado", mas também não está livre para o usuário.
-                        reserved = Math.Max(0, d.TotalFreeSpace - d.AvailableFreeSpace),
-                    };
-                }
-                catch { return null; }
-            })
-            .Where(d => d != null).OrderBy(d => d!.name == "/" ? "" : d.name).ToList();
+        var drives = Volumes().Select(x => x.Volume).ToList();
 
         var hidden = new List<HiddenItem>();
         foreach (var line in LinuxUser.ReadText("/proc/swaps").Split('\n').Skip(1))
@@ -192,7 +193,7 @@ public static class LinuxSystem
         catch { return 0; }
     }
 
-    private static string OsName()
+    public static string OsName()
     {
         var m = Regex.Match(LinuxUser.ReadText("/etc/os-release"), "^PRETTY_NAME=\"?([^\"\n]+)", RegexOptions.Multiline);
         return (m.Success ? m.Groups[1].Value : "Linux") + (LinuxUser.IsWsl ? " (WSL)" : "");

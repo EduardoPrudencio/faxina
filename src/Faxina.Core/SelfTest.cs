@@ -13,6 +13,8 @@ public static class SelfTest
         var report = new Dictionary<string, object?>();
         var sw = System.Diagnostics.Stopwatch.StartNew();
         report["system"] = platform.GetSystemInfo();
+        report["hardware"] = platform.GetHardware();
+        report["hardwareSeconds"] = sw.Elapsed.TotalSeconds;
 
         var scanner = new DiskScanner(CancellationToken.None, platform.ScanExcludes(scanPath));
         var root = scanner.Scan(scanPath);
